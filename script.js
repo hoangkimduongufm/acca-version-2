@@ -1,15 +1,17 @@
 let currentSection = 'ALL'; 
-let baseQuizData = [];      
+let baseQuizData = [];       
 let currentQuizData = [];   
 let currentIndex = 0;
 let userAnswers = [];
 let correctCount = 0;
 let currentWrongTab = 'wrong1'; 
 
-// --- 1. QUẢN LÝ LOCALSTORAGE (TIẾN ĐỘ & LỊCH SỬ CÂU SAI) ---
+// --- 1. QUẢN LÝ LOCALSTORAGE (TIẾN ĐỘ, LỊCH SỬ CÂU SAI, ÔN TẬP & THI THỬ) ---
 
 const STORAGE_KEY_PROGRESS = 'acca_quiz_progress_v1';
 const STORAGE_KEY_WRONG_HISTORY = 'acca_wrong_history_v2';
+const STORAGE_KEY_REVISION_HISTORY = 'acca_revision_history';
+const STORAGE_KEY_EXAM_HISTORY = 'acca_mock_exam_history';
 
 function saveQuizProgress(currentIndex, userAnswers, score) {
     const progressData = {
@@ -35,6 +37,47 @@ function loadQuizProgress() {
 
 function clearQuizProgress() {
     localStorage.removeItem(STORAGE_KEY_PROGRESS);
+}
+
+// Lưu lịch sử ôn tập ngay khi người dùng tương tác/chọn đáp án
+function saveRevisionHistoryToStorage() {
+    const answeredCount = userAnswers.filter(a => a !== null).length;
+    if (answeredCount === 0) return;
+
+    const wrongCount = answeredCount - correctCount;
+    const scoreRate = ((correctCount / currentQuizData.length) * 100).toFixed(1);
+
+    let revisionHistory = [];
+    try {
+        revisionHistory = JSON.parse(localStorage.getItem(STORAGE_KEY_REVISION_HISTORY) || '[]');
+    } catch (e) {
+        revisionHistory = [];
+    }
+
+    const record = {
+        date: new Date().toLocaleString(),
+        section: currentSection,
+        total: currentQuizData.length,
+        answered: answeredCount,
+        correct: correctCount,
+        wrong: wrongCount < 0 ? 0 : wrongCount,
+        scoreRate: scoreRate
+    };
+
+    revisionHistory.unshift(record);
+    localStorage.setItem(STORAGE_KEY_REVISION_HISTORY, JSON.stringify(revisionHistory));
+}
+
+// Lưu lịch sử bài thi thử (Mock Exam) vào localStorage khi bấm Submit
+function saveExamHistoryToStorage(examRecord) {
+    let history = [];
+    try {
+        history = JSON.parse(localStorage.getItem(STORAGE_KEY_EXAM_HISTORY) || '[]');
+    } catch (e) {
+        history = [];
+    }
+    history.unshift(examRecord);
+    localStorage.setItem(STORAGE_KEY_EXAM_HISTORY, JSON.stringify(history));
 }
 
 // Ghi nhận trạng thái trả lời: Tăng khi sai, Giảm khi đúng kèm theo xu hướng (trend)
@@ -346,6 +389,10 @@ function selectAnswer(optionIndex) {
 
     updateMeta();
     saveQuizProgress(currentIndex, userAnswers, correctCount);
+    
+    // Lưu lịch sử ôn tập ngay khi user chọn đáp án
+    saveRevisionHistoryToStorage();
+
     renderQuestion();
 }
 
@@ -379,6 +426,10 @@ function updateMeta() {
 
 function submitQuiz() {
     const answeredCount = userAnswers.filter(a => a !== null).length;
+    
+    // Cập nhật lần cuối khi submit bài ôn tập
+    saveRevisionHistoryToStorage();
+
     const modal = document.getElementById('results-modal');
     const resultText = document.getElementById('result-text');
     resultText.innerHTML = `You answered: <strong class="text-indigo-600">${answeredCount} / ${currentQuizData.length}</strong> Question.<br>Correct answers: <strong class="text-emerald-600">${correctCount} Number</strong><br>Accuracy rate: <strong class="text-blue-600">${((correctCount/currentQuizData.length)*100).toFixed(1)}%</strong>`;
@@ -391,12 +442,12 @@ function closeResults() {
     if(modal) modal.classList.add('hidden');
 }
 
-// --- 4. CHUYỂN TAB VÀ RENDER BẢNG LỊCH SỬ CÂU SAI ---
+// --- 4. CHUYỂN TAB VÀ RENDER BẢNG LỊCH SỬ (ÁP DỤNG CÙNG KHUNG CỐ ĐỊNH CHO CẢ MOCK EXAM) ---
 
 function switchWrongTab(tabName) {
     currentWrongTab = tabName;
     
-    ['wrong1', 'wrong2', 'wrongup3'].forEach(t => {
+    ['wrong1', 'wrong2', 'wrongup3', 'mockexam'].forEach(t => {
         const btn = document.getElementById(`tab-${t}`);
         if (!btn) return;
         if (t === tabName) {
@@ -413,6 +464,73 @@ function renderWrongQuestionsReview() {
     const tableBody = document.getElementById('wrong-questions-table-body');
     if (!tableBody) return;
 
+    // TRƯỜNG HỢP: TAB MOCK EXAM - Áp dụng đúng 4 cột cố định (Status, Section, Question, Action)
+    if (currentWrongTab === 'mockexam') {
+        let examHistory = [];
+        try {
+            examHistory = JSON.parse(localStorage.getItem(STORAGE_KEY_EXAM_HISTORY) || '[]');
+        } catch (e) {
+            examHistory = [];
+        }
+
+        if (examHistory.length === 0) {
+            tableBody.innerHTML = `
+                <tr>
+                    <td colspan="4" class="text-center py-10 text-slate-400 text-sm">
+                        Chưa có lịch sử thi thử nào được ghi nhận. Hãy bấm nút Mock Exam để bắt đầu! 📝
+                    </td>
+                </tr>
+            `;
+            return;
+        }
+
+        tableBody.innerHTML = '';
+        const totalExams = examHistory.length;
+        
+        examHistory.forEach((record, index) => {
+            const row = document.createElement('tr');
+            row.className = 'hover:bg-slate-50 transition-colors';
+            const attemptNo = totalExams - index;
+
+            let statusBadge = `
+                <div class="flex items-center justify-center gap-1.5">
+                    <span class="inline-block px-2.5 py-1 text-xs font-bold bg-indigo-50 text-indigo-700 rounded-md">Lần ${attemptNo}</span>
+                </div>
+            `;
+
+            let sectionBadge = `
+                <span class="inline-block px-2.5 py-1 text-xs font-semibold bg-slate-100 text-slate-700 rounded-md border border-slate-200">
+                    Mock ${attemptNo}
+                </span>
+            `;
+
+            let questionInfo = `
+                <div class="font-semibold text-slate-900">
+                    True: <span class="text-emerald-600">${record.correct}</span> / False: <span class="text-rose-600">${record.wrong}</span>
+                </div>
+                <div class="text-xs font-normal text-slate-500 mt-0.5">${record.date || ''}</div>
+            `;
+
+            // Tính điểm theo thang 100 điểm cho 15 câu (hoặc record.total)
+            let totalQ = record.total || 15;
+            let score10 = ((record.correct / totalQ) * 10).toFixed(1);
+
+            let actionItem = `
+                <span class="font-bold text-orange-600 text-sm">${score10} đ</span>               
+            `;
+
+            row.innerHTML = `
+                <td class="p-3 text-center border-b border-slate-100 align-middle">${statusBadge}</td>
+                <td class="p-3 border-b border-slate-100 align-middle">${sectionBadge}</td>
+                <td class="p-3 border-b border-slate-100 align-middle">${questionInfo}</td>
+                <td class="p-3 text-right border-b border-slate-100 align-middle">${actionItem}</td>
+            `;
+            tableBody.appendChild(row);
+        });
+        return;
+    }
+
+    // TRƯỜNG HỢP: CÁC TAB CÂU SAI THÔNG THƯỜNG (wrong1, wrong2, wrongup3)
     const wrongList = getFilteredWrongQuestions(currentWrongTab); 
 
     if (wrongList.length === 0) {
@@ -467,7 +585,220 @@ function renderWrongQuestionsReview() {
     });
 }
 
-// --- MODAL XEM CHI TIẾT CÂU HỎI (ĐỒNG BỘ GIAO DIỆN VỚI PHẦN ÔN TẬP CHÍNH) ---
+// --- 5. LOGIC THI THỬ (MOCK EXAM) ---
+
+let examQuestions = [];
+let examCurrentIndex = 0;
+let examUserAnswers = [];
+let examTimerInterval = null;
+let examTimeLeft = 1800; // 30 phút
+
+function startMockExam() {
+    if (typeof quizData === 'undefined' || quizData.length === 0) {
+        alert("Chưa tải được dữ liệu câu hỏi.");
+        return;
+    }
+
+    const sectionsMap = {};
+    quizData.forEach(q => {
+        const sec = q.section || 'General';
+        if (!sectionsMap[sec]) sectionsMap[sec] = [];
+        sectionsMap[sec].push(q);
+    });
+
+    const sectionKeys = Object.keys(sectionsMap);
+    let selectedQuestions = [];
+    const targetTotal = 16;
+    
+    let baseCountPerSection = Math.floor(targetTotal / sectionKeys.length);
+    let remainder = targetTotal % sectionKeys.length;
+
+    sectionKeys.forEach((sec, idx) => {
+        let countToTake = baseCountPerSection + (idx < remainder ? 1 : 0);
+        let shuffledSecQuestions = shuffleArray([...sectionsMap[sec]]);
+        selectedQuestions = selectedQuestions.concat(shuffledSecQuestions.slice(0, countToTake));
+    });
+
+    examQuestions = shuffleArray(selectedQuestions).slice(0, targetTotal);
+    examUserAnswers = new Array(examQuestions.length).fill(null);
+    examCurrentIndex = 0;
+
+    const qContainer = document.getElementById('question-container');
+    const tToolbar = document.getElementById('main-quiz-toolbar');
+    const tFooter = document.getElementById('main-quiz-footer');
+    const mScreen = document.getElementById('mock-exam-screen');
+
+    if(qContainer) qContainer.classList.add('hidden');
+    if(tToolbar) tToolbar.classList.add('hidden');
+    if(tFooter) tFooter.classList.add('hidden');
+    if(mScreen) mScreen.classList.remove('hidden');
+
+    examTimeLeft = 1800;
+    startExamTimer();
+    renderExamQuestion();
+}
+
+function startExamTimer() {
+    if (examTimerInterval) clearInterval(examTimerInterval);
+    
+    const timerDisplay = document.getElementById('exam-timer');
+    examTimerInterval = setInterval(() => {
+        if (examTimeLeft <= 0) {
+            clearInterval(examTimerInterval);
+            alert("Hết thời gian làm bài!");
+            submitMockExam();
+            return;
+        }
+        examTimeLeft--;
+        let minutes = Math.floor(examTimeLeft / 60);
+        let seconds = examTimeLeft % 60;
+        if(timerDisplay) {
+            timerDisplay.innerText = `${minutes < 10 ? '0' : ''}${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
+        }
+    }, 1000);
+}
+
+function renderExamQuestion() {
+    if (examQuestions.length === 0) return;
+
+    const container = document.getElementById('exam-question-container');
+    if (!container) return;
+    
+    const q = examQuestions[examCurrentIndex];
+    const selectedOpt = examUserAnswers[examCurrentIndex];
+
+    let html = `
+        <div class="mb-3 flex items-center justify-between">
+            <span class="text-xs font-semibold px-3 py-1 bg-indigo-50 text-indigo-600 rounded-full uppercase">Question ${examCurrentIndex + 1} / ${examQuestions.length}</span>
+            <span class="text-xs font-semibold px-3 py-1 bg-slate-100 text-slate-600 rounded-full">${q.section || 'General'}</span>
+        </div>
+        <h3 class="text-base sm:text-lg font-medium text-slate-900 mb-4 leading-relaxed">${q.question}</h3>
+    `;
+
+    const subQ = q['sub-Question'] || q.subQuestion;
+    if (subQ) {
+        html += `<p class="text-xs sm:text-sm font-semibold text-slate-800 mb-3">${subQ}</p>`;
+    }
+
+    html += `<div class="space-y-2.5">`;
+    const optionLetters = ['A', 'B', 'C', 'D'];
+    if (q.options && Array.isArray(q.options)) {
+        q.options.forEach((opt, idx) => {
+            const letter = optionLetters[idx];
+            const isSelected = selectedOpt === idx;
+            let borderClass = isSelected ? 'border-indigo-600 bg-indigo-50 ring-2 ring-indigo-500/20 font-semibold text-indigo-950' : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700';
+
+            html += `
+                <div onclick="selectExamAnswer(${idx})" class="flex items-start p-3 rounded-xl border ${borderClass} cursor-pointer transition shadow-sm text-sm sm:text-base">
+                    <div class="flex-shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-sm font-bold uppercase mr-3 ${isSelected ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600'}">
+                        ${letter}
+                    </div>
+                    <span class="self-center leading-normal">${opt}</span>
+                </div>
+            `;
+        });
+    }
+    html += `</div>`;
+
+    container.innerHTML = html;
+
+    const btnPrev = document.getElementById('exam-btn-prev');
+    const btnNext = document.getElementById('exam-btn-next');
+    const pageInd = document.getElementById('exam-page-indicator');
+
+    if(btnPrev) btnPrev.disabled = examCurrentIndex === 0;
+    if(btnNext) btnNext.disabled = examCurrentIndex === examQuestions.length - 1;
+    if(pageInd) pageInd.innerText = `Question ${examCurrentIndex + 1} / ${examQuestions.length}`;
+}
+
+function selectExamAnswer(optionIndex) {
+    examUserAnswers[examCurrentIndex] = optionIndex;
+    renderExamQuestion();
+}
+
+function examNextQuestion() {
+    if (examCurrentIndex < examQuestions.length - 1) {
+        examCurrentIndex++;
+        renderExamQuestion();
+    }
+}
+
+function examPrevQuestion() {
+    if (examCurrentIndex > 0) {
+        examCurrentIndex--;
+        renderExamQuestion();
+    }
+}
+
+// LƯU KẾT QUẢ VÀO STORAGE KHI BẤM NỘP BÀI (SUBMIT MOCK EXAM)
+function submitMockExam() {
+    if (examTimerInterval) clearInterval(examTimerInterval);
+
+    let correctCount = 0;
+    let wrongCount = 0;
+
+    examQuestions.forEach((q, idx) => {
+        if (examUserAnswers[idx] === q.correct) {
+            correctCount++;
+        } else {
+            wrongCount++;
+        }
+    });
+
+    saveExamHistoryToStorage({
+        date: new Date().toLocaleString(),
+        total: examQuestions.length,
+        correct: correctCount,
+        wrong: wrongCount,
+        scoreRate: ((correctCount / examQuestions.length) * 100).toFixed(1)
+    });
+
+    const detailsContainer = document.getElementById('exam-result-details');
+    if(detailsContainer) {
+        detailsContainer.innerHTML = `
+            <div class="flex justify-between py-1 border-b border-slate-100"><span>Tổng số câu hỏi:</span> <strong class="text-slate-900">${examQuestions.length} câu</strong></div>
+            <div class="flex justify-between py-1 border-b border-slate-100"><span>Số câu trả lời đúng:</span> <strong class="text-emerald-600">${correctCount} câu</strong></div>
+            <div class="flex justify-between py-1 border-b border-slate-100"><span>Số câu trả lời sai:</span> <strong class="text-rose-600">${wrongCount} câu</strong></div>
+            <div class="flex justify-between py-1"><span>Tỷ lệ chính xác:</span> <strong class="text-blue-600">${((correctCount / examQuestions.length) * 100).toFixed(1)}%</strong></div>
+            <div class="mt-3 p-3 bg-indigo-50 text-indigo-900 rounded-lg text-xs font-medium text-center">🎉 Chúc mừng bạn đã hoàn thành bài thi thử Mock Exam! Lịch sử đã được lưu lại thành công.</div>
+        `;
+    }
+
+    const examResModal = document.getElementById('exam-result-modal');
+    if(examResModal) examResModal.classList.remove('hidden');
+}
+
+function quitMockExam() {
+    if (confirm("Bạn có chắc chắn muốn thoát bài thi thử không?")) {
+        if (examTimerInterval) clearInterval(examTimerInterval);
+        const mScreen = document.getElementById('mock-exam-screen');
+        const qContainer = document.getElementById('question-container');
+        const tToolbar = document.getElementById('main-quiz-toolbar');
+        const tFooter = document.getElementById('main-quiz-footer');
+
+        if(mScreen) mScreen.classList.add('hidden');
+        if(qContainer) qContainer.classList.remove('hidden');
+        if(tToolbar) tToolbar.classList.remove('hidden');
+        if(tFooter) tFooter.classList.remove('hidden');
+    }
+}
+
+function closeExamResult() {
+    const examResModal = document.getElementById('exam-result-modal');
+    const mScreen = document.getElementById('mock-exam-screen');
+    const qContainer = document.getElementById('question-container');
+    const tToolbar = document.getElementById('main-quiz-toolbar');
+    const tFooter = document.getElementById('main-quiz-footer');
+
+    if(examResModal) examResModal.classList.add('hidden');
+    if(mScreen) mScreen.classList.add('hidden');
+    if(qContainer) qContainer.classList.remove('hidden');
+    if(tToolbar) tToolbar.classList.remove('hidden');
+    if(tFooter) tFooter.classList.remove('hidden');
+    initQuiz();
+}
+
+// --- 6. MODAL XEM CHI TIẾT CÂU HỎI ---
 
 function openQuestionDetail(questionId) {
     let foundQuestion = null;
@@ -475,10 +806,8 @@ function openQuestionDetail(questionId) {
     const dataPool = (typeof quizData !== 'undefined' && quizData.length > 0) ? quizData : baseQuizData;
 
     if (dataPool && dataPool.length > 0) {
-        // 1. Tìm theo id chính xác
         foundQuestion = dataPool.find(q => q.id && String(q.id).trim() === cleanId);
 
-        // 2. Nếu không thấy, tìm theo số thứ tự (Number X)
         if (!foundQuestion) {
             const matchNumber = cleanId.match(/\d+/);
             if (matchNumber) {
@@ -489,7 +818,6 @@ function openQuestionDetail(questionId) {
             }
         }
 
-        // 3. Dự phòng tìm mờ
         if (!foundQuestion) {
             foundQuestion = dataPool.find(q => JSON.stringify(q).includes(cleanId));
         }
@@ -506,7 +834,6 @@ function openQuestionDetail(questionId) {
     } else {
         if (titleContainer) titleContainer.innerText = `Detail: ${questionId} (${foundQuestion.section || 'N/A'})`;
 
-        // Xây dựng giao diện với font chữ responsive vừa phải cho mobile và desktop
         let html = `
             <div class="mb-3 flex items-center justify-between">
                 <div class="flex items-center gap-2">
@@ -518,7 +845,6 @@ function openQuestionDetail(questionId) {
             <h2 class="text-sm sm:text-base font-medium text-slate-800 mb-3 leading-relaxed">${foundQuestion.question}</h2>
         `;
 
-        // Xử lý statements (nếu có) với cỡ chữ vừa phải
         if (foundQuestion.statements && foundQuestion.statements.length > 0) {
             html += `<div class="mb-4 space-y-2 text-slate-700 text-xs sm:text-sm leading-relaxed">`;
             foundQuestion.statements.forEach(stmt => {
@@ -527,7 +853,6 @@ function openQuestionDetail(questionId) {
             html += `</div>`;
         }
 
-        // Xử lý questionTable (nếu có)
         if (foundQuestion.questionTable) {
             html += `<div class="mb-4 overflow-x-auto"><table class="min-w-full border border-slate-300 text-left text-xs sm:text-sm">`;
             html += `<thead class="bg-slate-100 font-semibold text-slate-700"><tr>`;
@@ -545,13 +870,11 @@ function openQuestionDetail(questionId) {
             html += `</tbody></table></div>`;
         }
 
-        // Xử lý sub-Question hoặc subQuestion
         const subQ = foundQuestion['sub-Question'] || foundQuestion.subQuestion;
         if (subQ) {
             html += `<p class="text-xs sm:text-sm font-semibold text-slate-800 mb-3">${subQ}</p>`;
         }
 
-        // Xử lý optionTable (nếu có)
         if (foundQuestion.optionTable) {
             html += `<div class="mb-4 overflow-x-auto"><table class="min-w-full border border-slate-300 text-center text-xs sm:text-sm">`;
             html += `<thead class="bg-slate-100 font-bold text-slate-700"><tr>`;
@@ -570,7 +893,6 @@ function openQuestionDetail(questionId) {
             html += `</tbody></table></div>`;
         }
 
-        // Render danh sách Options với cỡ chữ tối ưu trên mobile
         html += `<div class="space-y-2 mt-3">`;
         const optionLetters = ['A', 'B', 'C', 'D'];
 
@@ -601,7 +923,6 @@ function openQuestionDetail(questionId) {
         }
         html += `</div>`;
 
-        // Phần giải thích (Explanation) với font chữ gọn gàng
         if (foundQuestion.explanation) {
             html += `
                 <div class="mt-4 p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs sm:text-sm">
@@ -619,7 +940,14 @@ function openQuestionDetail(questionId) {
     modal.classList.remove('hidden');
 }
 
-// --- 6. KHỞI CHẠY & GẮN SỰ KIỆN DOM (POPUP MODAL) ---
+function closeQuestionDetailModal() {
+    const modal = document.getElementById('question-detail-modal');
+    if (modal) {
+        modal.classList.add('hidden');
+    }
+}
+
+// --- 7. KHỞI CHẠY & GẮN SỰ KIỆN DOM ---
 
 window.onload = function() {
     initQuiz();
@@ -630,7 +958,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const btnClose = document.getElementById('btn-close-wrong-history');
     const modal = document.getElementById('wrong-history-modal');
 
-    // Mở popup History
     if (btnToggle && modal) {
         btnToggle.addEventListener('click', () => {
             currentWrongTab = 'wrong1'; 
@@ -639,14 +966,12 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // Đóng popup History bằng nút X ở header
     if (btnClose && modal) {
         btnClose.addEventListener('click', () => {
             modal.classList.add('hidden');
         });
     }
 
-    // Đóng popup khi click ra vùng nền tối bên ngoài
     if (modal) {
         modal.addEventListener('click', (e) => {
             if (e.target === modal) {
@@ -655,11 +980,3 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 });
-
-// Hàm đóng popup chi tiết câu hỏi (gọi từ nút X trong modal detail)
-function closeQuestionDetailModal() {
-    const modal = document.getElementById('question-detail-modal');
-    if (modal) {
-        modal.classList.add('hidden');
-    }
-};
